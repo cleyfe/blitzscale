@@ -483,3 +483,43 @@ td i {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- lawsuits ---------- */
+
+.event.lawsuit {
+  color: #f1c40f;
+  border: 1px solid #f1c40f;
+}
+button.danger {
+  background: #7b2d26;
+  border-color: #c0392b;
+}
+.sue-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.sue-row select {
+  flex: 1;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px;
+}
+.case {
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-top: 6px;
+}
+.case.attack {
+  border: 1px solid #f1c40f;
+  color: #f1c40f;
+}
+.case.defend {
+  border: 1px solid var(--neg);
+  color: var(--neg);
+  background: rgba(255, 107, 91, 0.1);
+}

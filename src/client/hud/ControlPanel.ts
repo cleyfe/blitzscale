@@ -1,25 +1,28 @@
-import { BUILDING_TYPES, CONFIG, PRICE_LEVELS, type BuildingType } from '../game/config';
-import { EVENT_INFO, type Game } from '../game/game';
-import { NEUTRAL, WATER } from '../game/map';
-import { int, money, pct } from './format';
+import type { BuildingType, PriceLevel } from '@marketfront/engine-api/game/Game';
+import type { Intent } from '@marketfront/engine-api/Intents';
+import { BUILDING_TYPES, CONFIG, PRICE_LEVELS } from '@marketfront/engine-lib/configuration/Config';
+import { int, money, pct } from '@marketfront/engine-lib/Format';
+import type { GameImpl } from '@marketfront/engine/game/GameImpl';
+import { $ } from './dom';
 
+const B = CONFIG.buildings;
 const BUILDING_INFO: Record<BuildingType, { icon: string; effect: string }> = {
-  branch: { icon: '🏬', effect: `+${CONFIG.buildings.branch.capacity} customers served` },
-  warehouse: {
-    icon: '🏭',
-    effect: `Variable costs −${pct(1 - CONFIG.buildings.warehouse.variableCostMult)}`,
-  },
-  adAgency: { icon: '📣', effect: `Sales push +${pct(CONFIG.buildings.adAgency.pushBonus)}` },
+  branch: { icon: '🏬', effect: `+${B.branch.capacity} customer areas served` },
+  warehouse: { icon: '🏭', effect: `Variable costs −${pct(1 - B.warehouse.variableCostMult)}` },
+  adAgency: { icon: '📣', effect: `Sales push +${pct(B.adAgency.pushBonus)}` },
+  legalDept: { icon: '⚖️', effect: `Lets you sue · ${pct(B.legalDept.defense)} chance to dismiss suits` },
 };
 
-const el = <T extends HTMLElement = HTMLElement>(root: ParentNode, sel: string) => root.querySelector(sel) as T;
+type WithoutCompany<T> = T extends unknown ? Omit<T, 'companyId'> : never;
+type Send = (intent: WithoutCompany<Intent>) => void;
 
 /** The side panel: every lever the player can pull, plus a live P&L. */
-export class Hud {
+export class ControlPanel {
   readonly root: HTMLElement;
-  private toastTimer = 0;
-
-  constructor(private game: Game) {
+  constructor(
+    private game: GameImpl,
+    private sendIntent: (intent: Intent) => void,
+  ) {
     this.root = document.createElement('aside');
     this.root.className = 'hud';
     this.root.innerHTML = this.template();
@@ -33,7 +36,7 @@ export class Hud {
   private template(): string {
     const prices = PRICE_LEVELS.map((p) => `<button data-price="${p}">${CONFIG.prices[p].label}</button>`).join('');
     const buildings = BUILDING_TYPES.map((t) => {
-      const b = CONFIG.buildings[t];
+      const b = B[t];
       const info = BUILDING_INFO[t];
       return `<button class="building" data-build="${t}">
         <span class="b-icon">${info.icon}</span>
@@ -42,6 +45,7 @@ export class Hud {
         <span class="b-cost">${money(b.cost)}<br><small>${money(b.rentPerDay)}/day rent</small></span>
       </button>`;
     }).join('');
+    const L = CONFIG.lawsuit;
 
     return `
       <section class="panel valuation">
@@ -74,7 +78,7 @@ export class Hud {
       <section class="panel">
         <h3>Team <small data-v="team"></small></h3>
         <div class="split-labels"><span>⚙️ Operations <b data-v="ops"></b></span><span>Sales <b data-v="sales"></b> 🤝</span></div>
-        <input type="range" min="0" max="100" step="5" data-input="split" />
+        <input type="range" min="0" max="100" step="5" data-input="split" aria-label="Share of staff in sales" />
         <div class="meter"><div data-v="coverFill"></div></div>
         <div class="row small"><span>Customers served</span><span data-v="coverage"></span></div>
         <div class="warn" data-v="overload" hidden>Overloaded! Unserved customers are leaving. Move staff to Operations, hire, or open a Branch.</div>
@@ -87,7 +91,7 @@ export class Hud {
 
       <section class="panel">
         <h3>Price</h3>
-        <div class="seg" data-v="prices">${prices}</div>
+        <div class="seg">${prices}</div>
         <div class="row small"><span>Margin per customer</span><span data-v="margin"></span></div>
         <p class="tip" data-v="priceTip"></p>
       </section>
@@ -101,6 +105,17 @@ export class Hud {
       <section class="panel">
         <h3>Buildings</h3>
         ${buildings}
+      </section>
+
+      <section class="panel lawsuit-panel">
+        <h3>Lawsuits ⚖️</h3>
+        <div class="sue-row">
+          <select data-input="sueTarget" aria-label="Company to sue"></select>
+          <button data-action="sue" class="danger">Sue · ${money(L.cost)}</button>
+        </div>
+        <div class="row small"><span>Your chance to get a suit dismissed</span><span data-v="defense"></span></div>
+        <div data-v="cases" class="cases"></div>
+        <p class="tip">💡 A class action costs ${money(L.cost)} in legal fees and takes ${L.courtDays} days. If it isn't dismissed, the defendant loses ${pct(L.customerLoss)} of its customers all over its territory and pays you ${L.damagesRevenueDays} days of its revenue. If it's dismissed, you pay their costs. Legal risk is a real business cost.</p>
       </section>
 
       <section class="panel">
@@ -117,42 +132,33 @@ export class Hud {
   }
 
   private bind(): void {
-    const g = this.game;
     const r = this.root;
-    el<HTMLInputElement>(r, '[data-input="split"]').addEventListener('input', (e) => {
-      g.setSalesShare(this.me, Number((e.target as HTMLInputElement).value) / 100);
-    });
+    const send: Send = (i) => this.sendIntent({ ...i, companyId: 0 } as Intent);
+    $<HTMLInputElement>(r, '[data-input="split"]').addEventListener('input', (e) =>
+      send({ type: 'setSalesShare', share: Number((e.target as HTMLInputElement).value) / 100 }),
+    );
     r.querySelectorAll<HTMLButtonElement>('[data-price]').forEach((b) =>
-      b.addEventListener('click', () => g.setPrice(this.me, b.dataset.price as never)),
+      b.addEventListener('click', () => send({ type: 'setPrice', price: b.dataset.price as PriceLevel })),
     );
     r.querySelectorAll<HTMLButtonElement>('[data-hire]').forEach((b) =>
-      b.addEventListener('click', () => this.report(g.hire(this.me, Number(b.dataset.hire)))),
+      b.addEventListener('click', () => send({ type: 'hire', count: Number(b.dataset.hire) })),
     );
     r.querySelectorAll<HTMLButtonElement>('[data-fire]').forEach((b) =>
-      b.addEventListener('click', () => this.report(g.fire(this.me, Number(b.dataset.fire)))),
+      b.addEventListener('click', () => send({ type: 'fire', count: Number(b.dataset.fire) })),
     );
     r.querySelectorAll<HTMLButtonElement>('[data-build]').forEach((b) =>
-      b.addEventListener('click', () => this.report(g.build(this.me, b.dataset.build as BuildingType))),
+      b.addEventListener('click', () => send({ type: 'build', building: b.dataset.build as BuildingType })),
     );
-    el(r, '[data-bank="borrow"]').addEventListener('click', () => this.report(g.borrow(this.me)));
-    el(r, '[data-bank="repay"]').addEventListener('click', () => this.report(g.repay(this.me)));
-  }
-
-  report(error: string | null): void {
-    if (error) this.toast(error);
-  }
-
-  toast(text: string): void {
-    const t = document.querySelector<HTMLElement>('.toast');
-    if (!t) return;
-    t.textContent = text;
-    t.classList.add('show');
-    window.clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => t.classList.remove('show'), 2200);
+    $(r, '[data-bank="borrow"]').addEventListener('click', () => send({ type: 'borrow' }));
+    $(r, '[data-bank="repay"]').addEventListener('click', () => send({ type: 'repay' }));
+    $(r, '[data-action="sue"]').addEventListener('click', () => {
+      const target = Number($<HTMLSelectElement>(r, '[data-input="sueTarget"]').value);
+      if (!Number.isNaN(target)) send({ type: 'lawsuit', targetId: target });
+    });
   }
 
   private set(key: string, text: string, cls?: string): HTMLElement {
-    const e = el(this.root, `[data-v="${key}"]`);
+    const e = $(this.root, `[data-v="${key}"]`);
     e.textContent = text;
     if (cls !== undefined) e.className = cls;
     return e;
@@ -166,7 +172,7 @@ export class Hud {
     // Valuation, on a log scale from $1M to $1B so early progress is visible.
     this.set('total', money(v.total));
     const progress = Math.max(0, Math.min(1, Math.log10(Math.max(1, v.total) / 1e6) / 3));
-    el(this.root, '[data-v="unicornFill"]').style.width = pct(progress);
+    $(this.root, '[data-v="unicornFill"]').style.width = pct(progress);
     this.set('unicornText', `🦄 ${money(Math.max(0, v.total))} / $1B unicorn`);
     this.set('vCash', money(v.cash));
     this.set('vDebt', money(v.debt));
@@ -181,7 +187,7 @@ export class Hud {
     this.set('interest', money(p.interest));
     this.set('profit', money(p.profit), p.profit >= 0 ? 'pos' : 'neg');
     this.set('cash', money(c.cash), c.cash >= 0 ? '' : 'neg');
-    const warn = el(this.root, '[data-v="cashWarn"]');
+    const warn = $(this.root, '[data-v="cashWarn"]');
     if (c.cash < 0) {
       warn.hidden = false;
       warn.textContent = `Out of cash! Bankrupt in ${Math.max(0, CONFIG.bankruptcyGraceDays - c.negativeCashDays).toFixed(0)} days. Borrow, cut staff, or raise prices.`;
@@ -196,18 +202,19 @@ export class Hud {
     this.set('team', `${int(c.employees)} staff${trainees ? ` + ${trainees} training` : ''}`);
     this.set('ops', int(g.opsStaff(c)));
     this.set('sales', int(g.salesStaff(c)));
-    const slider = el<HTMLInputElement>(this.root, '[data-input="split"]');
+    const slider = $<HTMLInputElement>(this.root, '[data-input="split"]');
     if (document.activeElement !== slider) slider.value = String(Math.round(c.salesShare * 100));
     const cap = g.capacity(c);
     const cover = g.coverage(c);
-    el(this.root, '[data-v="coverFill"]').style.width = pct(cover);
-    el(this.root, '[data-v="coverFill"]').className = cover < 1 ? 'bad' : '';
+    const coverFill = $(this.root, '[data-v="coverFill"]');
+    coverFill.style.width = pct(cover);
+    coverFill.className = cover < 1 ? 'bad' : '';
     this.set('coverage', `${int(Math.min(cap, c.tiles))} / ${int(c.tiles)} areas (capacity ${int(cap)})`);
-    el(this.root, '[data-v="overload"]').hidden = cover >= 1;
+    $(this.root, '[data-v="overload"]').hidden = cover >= 1;
 
-    this.root.querySelectorAll<HTMLButtonElement>('[data-price]').forEach((b) =>
-      b.classList.toggle('active', b.dataset.price === c.price),
-    );
+    this.root
+      .querySelectorAll<HTMLButtonElement>('[data-price]')
+      .forEach((b) => b.classList.toggle('active', b.dataset.price === c.price));
     const margin = CONFIG.prices[c.price].revenue * g.revenueMult() - CONFIG.variableCostPerCustomer * g.variableCostMult(c);
     this.set('margin', `${money(margin)} / day`);
     this.set(
@@ -220,99 +227,46 @@ export class Hud {
     );
 
     this.set('pushRate', `+${g.pushPerDay(c).toFixed(1)}/day`);
-    el(this.root, '[data-v="pushFill"]').style.width = pct(c.push / g.maxPush(c));
+    $(this.root, '[data-v="pushFill"]').style.width = pct(c.push / g.maxPush(c));
 
     for (const t of BUILDING_TYPES) {
       const n = c.buildings[t];
-      el(this.root, `[data-bcount="${t}"]`).textContent = n ? `×${n}` : '';
-      const btn = el<HTMLButtonElement>(this.root, `[data-build="${t}"]`);
-      btn.disabled = n >= CONFIG.buildings[t].max || c.cash < CONFIG.buildings[t].cost;
+      $(this.root, `[data-bcount="${t}"]`).textContent = n ? `×${n}` : '';
+      $<HTMLButtonElement>(this.root, `[data-build="${t}"]`).disabled = n >= B[t].max || c.cash < B[t].cost;
     }
+
+    this.updateLawsuits();
 
     this.set('debt', money(c.debt));
     this.set('limit', money(g.maxDebt(c)));
     this.set('interestDay', `${money(p.interest)}/day`);
   }
-}
 
-/** Top bar: time, speed and active market events. */
-export class TopBar {
-  readonly root: HTMLElement;
-  constructor(
-    private game: Game,
-    onSpeed: (speed: number) => void,
-  ) {
-    this.root = document.createElement('header');
-    this.root.className = 'topbar';
-    this.root.innerHTML = `
-      <div class="brand">Market<b>Front</b></div>
-      <div class="clock"><span data-v="day"></span><div class="timebar"><div data-v="timeFill"></div></div></div>
-      <div class="events" data-v="events"></div>
-      <div class="speed">
-        <button data-speed="0">⏸</button><button data-speed="1" class="active">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button>
-      </div>`;
-    this.root.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((b) =>
-      b.addEventListener('click', () => {
-        onSpeed(Number(b.dataset.speed));
-        this.root.querySelectorAll('[data-speed]').forEach((x) => x.classList.toggle('active', x === b));
-      }),
-    );
-  }
-
-  update(): void {
+  private updateLawsuits(): void {
     const g = this.game;
-    const day = Math.floor(g.day);
-    el(this.root, '[data-v="day"]').textContent = `Day ${day} · Year ${Math.floor(day / 365) + 1}`;
-    el(this.root, '[data-v="timeFill"]').style.width = pct(g.day / CONFIG.matchDays);
-    el(this.root, '[data-v="events"]').innerHTML = g.events
-      .map((e) => {
-        const info = EVENT_INFO[e.kind];
-        return `<span class="event ${e.kind}" title="${info.text}">${info.title} · ${Math.ceil(e.endsDay - g.day)}d</span>`;
+    const c = this.me;
+    const select = $<HTMLSelectElement>(this.root, '[data-input="sueTarget"]');
+    const rivals = g.companies.filter((r) => r.alive && r.id !== c.id);
+    const key = rivals.map((r) => r.id).join(',');
+    if (select.dataset.key !== key) {
+      const prev = select.value;
+      select.innerHTML = rivals.map((r) => `<option value="${r.id}">${r.name}</option>`).join('');
+      if (rivals.some((r) => String(r.id) === prev)) select.value = prev;
+      select.dataset.key = key;
+    }
+    const sueBtn = $<HTMLButtonElement>(this.root, '[data-action="sue"]');
+    const busy = g.activeLawsuitBy(c);
+    sueBtn.disabled = c.buildings.legalDept === 0 || !!busy || c.cash < CONFIG.lawsuit.cost || rivals.length === 0;
+    sueBtn.title = c.buildings.legalDept === 0 ? 'Open a Legal Dept first' : busy ? 'Your lawyers are busy' : '';
+    this.set('defense', pct(g.legalDefense(c)));
+    const mine = g.lawsuits.filter((l) => l.plaintiff === c.id || l.defendant === c.id);
+    $(this.root, '[data-v="cases"]').innerHTML = mine
+      .map((l) => {
+        const days = Math.ceil(l.rulingDay - g.day);
+        return l.plaintiff === c.id
+          ? `<div class="case attack">You v. ${g.companies[l.defendant].name}: ruling in ${days}d</div>`
+          : `<div class="case defend">${g.companies[l.plaintiff].name} is suing you! Ruling in ${days}d. A Legal Dept improves your odds.</div>`;
       })
       .join('');
   }
-}
-
-/** Leaderboard and news feed shown under the map. */
-export class Board {
-  readonly root: HTMLElement;
-  constructor(private game: Game) {
-    this.root = document.createElement('div');
-    this.root.className = 'board';
-    this.root.innerHTML = `<section class="panel leaders"><h3>Leaderboard</h3><table data-v="leaders"></table></section>
-      <section class="panel news"><h3>News</h3><ul data-v="news"></ul></section>`;
-  }
-
-  update(): void {
-    const g = this.game;
-    const land = g.owner.reduce((s, o) => s + (o === WATER ? 0 : 1), 0);
-    const rows = [...g.companies]
-      .sort((a, b) => g.valuation(b).total - g.valuation(a).total || b.tiles - a.tiles)
-      .map((c) => {
-        const col = `rgb(${c.color.join(',')})`;
-        const status = c.alive ? `${pct(c.tiles / land)} share` : 'closed';
-        return `<tr class="${c.alive ? '' : 'dead'} ${c.isBot ? '' : 'me'}">
-          <td><i style="background:${col}"></i>${c.name}</td>
-          <td>${CONFIG.prices[c.price].label}</td><td>${status}</td><td>${money(g.valuation(c).total)}</td></tr>`;
-      })
-      .join('');
-    el(this.root, '[data-v="leaders"]').innerHTML =
-      `<tr><th>Company</th><th>Price</th><th>Market</th><th>Value</th></tr>${rows}`;
-    el(this.root, '[data-v="news"]').innerHTML = g.log
-      .slice(-7)
-      .reverse()
-      .map((l) => `<li class="${l.tone}"><span>D${l.day}</span>${l.text}</li>`)
-      .join('');
-  }
-}
-
-/** Text for the map hover tooltip. */
-export function describeTile(g: Game, tile: number): string {
-  const o = g.owner[tile];
-  if (o === WATER) return 'Water: no customers';
-  const d = g.map.demand[tile];
-  const who = o === NEUTRAL ? 'Untapped market' : o === 0 ? 'Your customers' : g.companies[o].name;
-  let s = `${who} · ${d.toFixed(2)} customers`;
-  if (o !== 0) s += ` · costs ${g.tileCost(g.player, o, tile).toFixed(1)} push`;
-  return s;
 }

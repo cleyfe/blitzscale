@@ -1,14 +1,16 @@
-import type { Game } from '../game/game';
-import { NEUTRAL, WATER } from '../game/map';
+import { NEUTRAL, WATER } from '@marketfront/engine-api/game/GameMap';
+import type { GameImpl } from '@marketfront/engine/game/GameImpl';
 
-/** Draws the market map at one pixel per tile, scaled up by CSS. */
+const COURT_GOLD: [number, number, number] = [241, 196, 15];
+
+/** Draws the market map at one pixel per area, scaled up by CSS. */
 export class MapRenderer {
   readonly canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private image: ImageData;
-  private drawnVersion = -1;
+  private drawnKey = '';
 
-  constructor(private game: Game) {
+  constructor(private game: GameImpl) {
     const { width, height } = game.map;
     this.canvas = document.createElement('canvas');
     this.canvas.width = width;
@@ -18,10 +20,15 @@ export class MapRenderer {
     this.image = this.ctx.createImageData(width, height);
   }
 
-  draw(force = false): void {
+  draw(): void {
     const g = this.game;
-    if (!force && g.ownershipVersion === this.drawnVersion) return;
-    this.drawnVersion = g.ownershipVersion;
+    // Companies being sued get a blinking gold border while the case runs.
+    const blink = Math.floor(performance.now() / 400) % 2 === 0;
+    const inCourt = new Set(blink ? g.lawsuits.map((l) => l.defendant) : []);
+    const key = `${g.ownershipVersion}|${[...inCourt].join(',')}`;
+    if (key === this.drawnKey) return;
+    this.drawnKey = key;
+
     const px = this.image.data;
     const { demand } = g.map;
     for (let i = 0; i < g.owner.length; i++) {
@@ -40,8 +47,10 @@ export class MapRenderer {
           const k = 0.55 + shade * 0.45;
           [r, gr, b] = [cr * k, cg * k, cb * k];
           if (g.companies[o].border.has(i)) {
+            if (inCourt.has(o)) [r, gr, b] = COURT_GOLD;
             // Your own border glows; rivals' borders are darker.
-            [r, gr, b] = o === 0 ? [cr + (255 - cr) * 0.45, cg + (255 - cg) * 0.45, cb + (255 - cb) * 0.45] : [cr * 0.5, cg * 0.5, cb * 0.5];
+            else if (o === 0) [r, gr, b] = [cr + (255 - cr) * 0.45, cg + (255 - cg) * 0.45, cb + (255 - cb) * 0.45];
+            else [r, gr, b] = [cr * 0.5, cg * 0.5, cb * 0.5];
           }
         }
       }
@@ -54,7 +63,7 @@ export class MapRenderer {
     this.ctx.putImageData(this.image, 0, 0);
   }
 
-  /** Converts a mouse event to a tile index, or -1 when outside the map. */
+  /** Converts a mouse event to an area index, or -1 when outside the map. */
   tileAt(ev: MouseEvent): number {
     const rect = this.canvas.getBoundingClientRect();
     const x = Math.floor(((ev.clientX - rect.left) / rect.width) * this.game.map.width);

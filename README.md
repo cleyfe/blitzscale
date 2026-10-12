@@ -1,8 +1,8 @@
 # MarketFront 🦄
 
 A real-time business strategy game that teaches how a company makes (and loses) money.
-Inspired by territory games like OpenFront, but the map is a **market**, territory is
-**customers**, and you win on **valuation**, not land.
+Inspired by territory games like [OpenFront](https://github.com/openfrontio/OpenFrontIO), but the map is a **market**, territory is
+**customers**, and you win on **valuation**, not land. All code here is original.
 
 ```bash
 npm install
@@ -34,6 +34,7 @@ Investors pay for profit, so a smaller, profitable company can beat a big one th
 | **Branch** 🏬 | $20K, $150/day rent, +30 serve capacity | Fixed costs and capacity |
 | **Warehouse** 🏭 | $40K, $400/day rent, variable costs −30% (max 3) | Economies of scale |
 | **Ad Agency** 📣 | $30K, $300/day rent, sales push +50% (max 3) | Marketing ROI |
+| **Legal Dept** ⚖️ | $60K, $500/day rent. Needed to sue; each gives a 35% chance to get a suit against you dismissed (max 2) | Compliance as insurance |
 | **Bank loan** | $25K at a time, 24%/year interest, credit limit = 60 days of revenue | Leverage and risk |
 
 ### Every day
@@ -46,6 +47,14 @@ Profit   = Revenue − Costs  → added to Cash
 
 - If you have more customers than your Ops staff can serve, the unserved ones bring in no revenue **and start leaving**.
 - Winning a rival's customers costs more when they charge less than you, or when they serve their customers well.
+
+### Class action lawsuits ⚖️
+
+The big weapon. With a Legal Dept you can sue a rival for **$250K** in legal fees.
+The case takes **30 days**, and everyone sees it coming, so the defendant can hire
+lawyers. If it isn't dismissed, the defendant loses **25% of its customers in clusters
+all over its territory** and pays you **20 days of its revenue** in damages. If it is
+dismissed, you pay the defendant's $50K costs. One case at a time per company.
 
 ### Market events (every ~4–6 months)
 
@@ -62,14 +71,19 @@ Profit   = Revenue − Costs  → added to Cash
 ## Code layout
 
 ```
-src/game/   deterministic simulation (no DOM): config, map, game rules, bots
-src/ui/     canvas map renderer and HUD panels
-tests/      rules tests (vitest)
-scripts/    headless balance simulation
+packages/
+  engine-api/   contract: intents and game types
+  engine-lib/   config, map generation, PRNG, deterministic math, formatting
+  engine/       the simulation: GameImpl, executions, bots, GameRunner
+src/client/     canvas renderer, HUD, input, game loop
+tests/          rules tests + layer-boundary checks (vitest)
+scripts/        headless balance simulation
 ```
 
-All tunable numbers live in `src/game/config.ts`. The simulation is seeded and
-deterministic, so lockstep multiplayer can be added later.
+Every action is an **intent** turned into an **execution**, for players and bots
+alike. All tunable numbers live in `packages/engine-lib/src/configuration/Config.ts`.
+The engine is seeded and deterministic, so lockstep multiplayer can be added later.
+See [CLAUDE.md](CLAUDE.md) for the architecture rules.
 
 ## Roadmap ideas
 

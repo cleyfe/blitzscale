@@ -1,5 +1,5 @@
 // Deterministic PRNG (mulberry32) so a seed always replays the same match.
-export class Rng {
+export class PseudoRandom {
   private s: number;
   constructor(seed: number) {
     this.s = seed >>> 0;
@@ -18,5 +18,8 @@ export class Rng {
   }
   pick<T>(items: readonly T[]): T {
     return items[this.int(0, items.length)];
+  }
+  chance(p: number): boolean {
+    return this.next() < p;
   }
 }

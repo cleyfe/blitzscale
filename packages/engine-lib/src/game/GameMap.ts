@@ -1,18 +1,9 @@
-import { CONFIG } from './config';
-import { Rng } from './rng';
+import type { GameMap } from '@marketfront/engine-api/game/GameMap';
+import { CONFIG } from '../configuration/Config';
+import { exp } from '../DetMath';
+import type { PseudoRandom } from '../PseudoRandom';
 
-export const WATER = -2;
-export const NEUTRAL = -1;
-
-export interface GameMap {
-  width: number;
-  height: number;
-  /** Customers per tile (0 for water). */
-  demand: Float32Array;
-  isWater: Uint8Array;
-}
-
-function valueNoise(rng: Rng, w: number, h: number, cell: number): Float32Array {
+function valueNoise(rng: PseudoRandom, w: number, h: number, cell: number): Float32Array {
   const gw = Math.ceil(w / cell) + 2;
   const gh = Math.ceil(h / cell) + 2;
   const grid = new Float32Array(gw * gh).map(() => rng.next());
@@ -36,7 +27,8 @@ function valueNoise(rng: Rng, w: number, h: number, cell: number): Float32Array 
   return out;
 }
 
-export function generateMap(rng: Rng): GameMap {
+/** A landmass of customer areas, with dense cities and some water. */
+export function generateMap(rng: PseudoRandom): GameMap {
   const { width: w, height: h, cities } = CONFIG.map;
   const n1 = valueNoise(rng, w, h, 18);
   const n2 = valueNoise(rng, w, h, 7);
@@ -64,8 +56,8 @@ export function generateMap(rng: Rng): GameMap {
       }
       let d = 1;
       for (const c of cityList) {
-        const dist2 = (x - c.x) ** 2 + (y - c.y) ** 2;
-        d += c.peak * Math.exp(-dist2 / (2 * c.r * c.r));
+        const dist2 = (x - c.x) * (x - c.x) + (y - c.y) * (y - c.y);
+        d += c.peak * exp(-dist2 / (2 * c.r * c.r));
       }
       demand[i] = Math.round(d * 4) / 4;
     }

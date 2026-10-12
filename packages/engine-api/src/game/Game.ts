@@ -1,6 +1,13 @@
-import type { BuildingType, PriceLevel } from './config';
-
+export type PriceLevel = 'low' | 'medium' | 'high';
+export type BuildingType = 'branch' | 'warehouse' | 'adAgency' | 'legalDept';
 export type Personality = 'discounter' | 'balanced' | 'premium';
+
+export interface CompanySpec {
+  name: string;
+  color: [number, number, number];
+  isBot: boolean;
+  personality?: Personality;
+}
 
 export interface Pnl {
   revenue: number;
@@ -9,14 +16,6 @@ export interface Pnl {
   rent: number;
   interest: number;
   profit: number;
-}
-
-export interface Campaign {
-  /** Owner id being targeted, or NEUTRAL for the untapped market. */
-  target: number;
-  aimX: number;
-  aimY: number;
-  budget: number;
 }
 
 export interface Company {
@@ -37,7 +36,6 @@ export interface Company {
   buildingSpend: number;
 
   push: number;
-  campaigns: Campaign[];
 
   tiles: number;
   customers: number; // total demand of owned tiles
@@ -50,20 +48,32 @@ export interface Company {
 
   peakTiles: number;
   peakValuation: number;
-  bankruptDay: number | null;
+  closedDay: number | null;
 }
 
-export type GameEventKind = 'recession' | 'supplierHike' | 'boom';
+export interface Lawsuit {
+  plaintiff: number;
+  defendant: number;
+  filedDay: number;
+  rulingDay: number;
+}
+
+export type MarketEventKind = 'recession' | 'supplierHike' | 'boom';
 
 export interface ActiveEvent {
-  kind: GameEventKind;
+  kind: MarketEventKind;
   endsDay: number;
 }
 
+export type MessageTone = 'info' | 'good' | 'bad' | 'error';
+
 export interface LogEntry {
+  id: number;
   day: number;
   text: string;
-  tone: 'info' | 'good' | 'bad';
+  tone: MessageTone;
+  /** Set for private messages (e.g. rejected actions); otherwise public news. */
+  recipient?: number;
 }
 
 export type WinReason = 'unicorn' | 'time' | 'lastStanding' | 'playerBankrupt';

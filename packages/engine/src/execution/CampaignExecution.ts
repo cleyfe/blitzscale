@@ -1,0 +1,90 @@
+import { NEUTRAL, WATER } from '@marketfront/engine-api/game/GameMap';
+import { CONFIG } from '@marketfront/engine-lib/configuration/Config';
+import { neighbors4 } from '@marketfront/engine-lib/game/GameMap';
+import type { GameImpl } from '../game/GameImpl';
+import type { Execution } from './Execution';
+
+/**
+ * A sales campaign: spends part of the push pool to win the customer areas
+ * of one target (the untapped market or a rival), nearest the aim point first.
+ */
+export class CampaignExecution implements Execution {
+  private active = true;
+  private target = NEUTRAL;
+  private budget = 0;
+  private aimX = 0;
+  private aimY = 0;
+  private nb: number[] = [];
+
+  constructor(
+    private companyId: number,
+    private tile: number,
+  ) {}
+
+  init(game: GameImpl): void {
+    const c = game.companies[this.companyId];
+    const fail = (msg: string) => {
+      game.message(c.id, msg);
+      this.active = false;
+    };
+    if (!c.alive) return fail('Your company is closed.');
+    if (this.tile < 0 || this.tile >= game.owner.length) return fail('That is off the map.');
+    const target = game.owner[this.tile];
+    if (target === WATER) return fail('Nobody lives there.');
+    if (target === c.id) return fail('Those are already your customers.');
+    if (!game.touches(c, target)) return fail('You can only expand into markets next to yours.');
+    const budget = c.push * CONFIG.sales.campaignShare;
+    if (budget < 1) return fail('Not enough sales push yet: put more staff in Sales.');
+    c.push -= budget;
+    this.target = target;
+    this.budget = budget;
+    this.aimX = this.tile % game.map.width;
+    this.aimY = (this.tile / game.map.width) | 0;
+  }
+
+  isActive(): boolean {
+    return this.active;
+  }
+
+  tick(game: GameImpl): void {
+    const c = game.companies[this.companyId];
+    if (!c.alive) {
+      this.active = false;
+      return;
+    }
+    if (this.target >= 0 && !game.companies[this.target].alive) this.target = NEUTRAL;
+    if (this.advance(game)) {
+      // Unspent push goes back to the pool.
+      c.push = Math.min(game.maxPush(c), c.push + this.budget);
+      this.active = false;
+    }
+  }
+
+  /** Returns true when the campaign is finished. */
+  private advance(game: GameImpl): boolean {
+    const c = game.companies[this.companyId];
+    const w = game.map.width;
+    const seen = new Set<number>();
+    const candidates: { tile: number; score: number }[] = [];
+    for (const b of c.border) {
+      for (const n of neighbors4(game.map, b, this.nb)) {
+        if (game.owner[n] !== this.target || seen.has(n)) continue;
+        seen.add(n);
+        const dx = (n % w) - this.aimX;
+        const dy = ((n / w) | 0) - this.aimY;
+        candidates.push({ tile: n, score: Math.sqrt(dx * dx + dy * dy) + game.rng.next() * 4 });
+      }
+    }
+    if (candidates.length === 0) return true;
+    candidates.sort((a, b) => a.score - b.score);
+    const perTick = Math.max(2, Math.ceil(candidates.length / 12));
+    for (let i = 0; i < Math.min(perTick, candidates.length); i++) {
+      const tile = candidates[i].tile;
+      const cost = game.tileCost(c, this.target, tile);
+      if (this.budget < cost) return true;
+      this.budget -= cost;
+      game.setOwner(tile, c.id);
+    }
+    return false;
+  }
+}

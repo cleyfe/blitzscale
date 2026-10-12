@@ -1,33 +1,29 @@
 // Headless balance check: runs bot-only matches and prints how they end.
 // Usage: npm run balance -- [matches]
-import { CONFIG } from '../src/game/config';
-import { Game } from '../src/game/game';
-import { defaultCompanies } from '../src/game/setup';
+import { CONFIG } from '@marketfront/engine-lib/configuration/Config';
+import { defaultCompanies } from '@marketfront/engine-lib/configuration/Companies';
+import { money } from '@marketfront/engine-lib/Format';
+import { GameRunner } from '@marketfront/engine/GameRunner';
 
 const matches = Number(process.argv[2] ?? 8);
-const fmt = (n: number) => (Math.abs(n) >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : (n / 1e3).toFixed(0) + 'K');
+const wins: Record<string, number> = {};
+let suits = 0;
+let dismissed = 0;
 
 for (let m = 0; m < matches; m++) {
-  const g = new Game(1000 + m, defaultCompanies('Bot-Player', true));
-  const checkpoints = [100, 300, 600];
-  while (!g.result) {
-    g.step();
-    if (g.tick % CONFIG.ticksPerDay === 0 && checkpoints.includes(g.day)) {
-      console.log(
-        `  day ${g.day}: ` +
-          g.companies
-            .map((c) => `${c.name}[${c.alive ? c.tiles + 't ' + c.employees + 'e $' + fmt(c.cash) + ' v' + fmt(g.valuation(c).total) : 'dead'}]`)
-            .join(' '),
-      );
-    }
-  }
-  const r = g.result;
-  const w = r.winnerId === null ? 'none' : g.companies[r.winnerId].name;
-  console.log(`match ${m}: ${w} wins by ${r.reason} on day ${r.day.toFixed(0)}`);
+  const r = new GameRunner(1000 + m, defaultCompanies('Bot-Player', true));
+  const g = r.game;
+  while (!g.result) r.executeNextTick();
+  const res = g.result;
+  const w = res.winnerId === null ? 'none' : g.companies[res.winnerId].name;
+  wins[w] = (wins[w] ?? 0) + 1;
+  suits += g.log.filter((l) => l.text.includes('filed a class action')).length;
+  dismissed += g.log.filter((l) => l.text.includes('dismissed')).length;
+  console.log(`match ${m}: ${w} wins by ${res.reason} on day ${res.day.toFixed(0)}`);
   for (const c of g.companies) {
-    const v = g.valuation(c);
     console.log(
-      `    ${c.name.padEnd(12)} ${c.alive ? 'alive' : 'BANKRUPT d' + c.bankruptDay?.toFixed(0)} tiles=${c.tiles} peak=${c.peakTiles} emp=${c.employees} cash=${fmt(c.cash)} debt=${fmt(c.debt)} profit/d=${fmt(c.avgProfit)} val=${fmt(v.total)} peakVal=${fmt(c.peakValuation)} bld=${JSON.stringify(c.buildings)}`,
+      `    ${c.name.padEnd(12)} ${c.alive ? 'alive ' : `closed d${c.closedDay?.toFixed(0)}`} areas=${c.tiles} peak=${c.peakTiles} staff=${c.employees} cash=${money(c.cash)} debt=${money(c.debt)} profit/d=${money(c.avgProfit)} peakVal=${money(c.peakValuation)} legal=${c.buildings.legalDept}`,
     );
   }
 }
+console.log(`\nwins: ${JSON.stringify(wins)}  lawsuits filed: ${suits}, dismissed: ${dismissed}  (match length ${CONFIG.matchDays} days)`);
